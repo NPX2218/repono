@@ -116,7 +116,7 @@ namespace repono
             return std::get<int64_t>(a) < std::get<int64_t>(b);
         }
 
-        if (std::holds_alternative<double>(a) && std::holds_alternative<double>(a))
+        if (std::holds_alternative<double>(a) && std::holds_alternative<double>(b))
         {
             return std::get<double>(a) < std::get<double>(b);
         }
@@ -166,6 +166,12 @@ namespace repono
         BOOLEAN
     };
 
+    /**
+     * Get the string version of a datatype
+     *
+     * @param type The type to convert
+     */
+
     std::string datatype_to_string(DataType type)
     {
         switch (type)
@@ -183,6 +189,14 @@ namespace repono
         }
     };
 
+    /*
+     * Describes one column in a table, e.g.:
+     * name: "id"
+     * type: INTEGER, VARCHAR, etc.
+     * is_primary_key: Is this the primary key?
+     * is_nullable: Can this column contain NULL?
+     */
+
     struct ColumnDef
     {
         std::string name;
@@ -194,6 +208,12 @@ namespace repono
 
         ColumnDef(std::string n, DataType t, bool pk = false, bool nullable = true) : name(std::move(n)), type(t), is_primary_key(pk), is_nullable(nullable) {};
 
+        /**
+         * Validate that a value matches this column's type
+         *
+         * @param v The Value to validate
+         * @returns "" if valid or an error message if invalid
+         */
         std::string validate(const Value &v) const
         {
             if (is_null(v))
@@ -236,15 +256,36 @@ namespace repono
     {
 
     public:
+        /**
+         * Add a column to the schema
+         *
+         * @param column The column to add
+         */
         void add_column(const ColumnDef &column)
         {
             column_indices_[column.name] = columns_.size();
             columns_.push_back(column);
         }
 
+        /**
+         * Get all the columns
+         */
         const std::vector<ColumnDef> &get_columns() const { return columns_; }
+
+        /**
+         * Get the number of columns
+         */
+
         size_t num_columns() const { return columns_.size(); }
 
+        /**
+         * Look up a column's index by name
+         * Returns std::nullopt if not found
+         *
+         * @param name The name of the specific column
+         * @return The index of the column, or std::nullopt if not found
+
+         */
         std::optional<size_t> get_column_index(const std::string &name) const
         {
             auto it = column_indices_.find(name);
@@ -255,6 +296,12 @@ namespace repono
             return std::nullopt;
         };
 
+        /**
+         * Get a column definition by its name
+         *
+         * @param name The name of the column
+         * @returns Pointer to the ColumnDef, or nullptr if not found
+         */
         const ColumnDef *get_column(const std::string &name) const
         {
             auto idx = get_column_index(name);
@@ -265,10 +312,22 @@ namespace repono
             return nullptr;
         }
 
+        /**
+         * Check if a column exists
+         * @param name The name of the column
+         * @returns true if the column exists, false otherwise
+         */
+
         bool has_column(const std::string &name) const
         {
             return column_indices_.find(name) != column_indices_.end();
         }
+
+        /**
+         * Validates that the schema and the rows match up
+         * @param row The row of values to validate against the schema
+
+         */
 
         std::string validate_row(const Row &row) const
         {
