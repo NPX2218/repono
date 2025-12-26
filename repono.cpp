@@ -124,7 +124,7 @@ namespace repono
         if ((std::holds_alternative<int64_t>(a) || std::holds_alternative<double>(a)) &&
             (std::holds_alternative<int64_t>(b) || std::holds_alternative<double>(b)))
         {
-            double da = std::holds_alternative<int64_t>(a) ? static_cast<double>(std::get<int64_t>(a)) : std::get<int64_t>(a);
+            double da = std::holds_alternative<int64_t>(a) ? static_cast<double>(std::get<int64_t>(a)) : std::get<double>(a);
 
             double db = std::holds_alternative<int64_t>(b)
                             ? static_cast<double>(std::get<int64_t>(b))
