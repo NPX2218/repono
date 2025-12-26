@@ -326,7 +326,6 @@ namespace repono
         /**
          * Validates that the schema and the rows match up
          * @param row The row of values to validate against the schema
-
          */
 
         std::string validate_row(const Row &row) const
@@ -353,7 +352,85 @@ namespace repono
         std::unordered_map<std::string, size_t> column_indices_; // Name -> index  e.g. { "id"→0, "name"→1, "age"→2 }
     };
 
+    /**
+     * COMMIT
+     *
+     * A commit is an immutable snapshot of the database state.
+     * A unique identifier (hash)
+     * A pointer to the parent commit
+     * Metadata (message, timestamp, author)
+     * The actual data (snapshots of all tables)
+     * */
+
+    struct Commit
+    {
+        std::string hash;
+        std::string parent_hash;
+        std::string message;
+        int64_t timestamp;
+
+        std::unordered_map<std::string, std::vector<Row>> table_data;
+
+        /**
+         * Checks if this is the initial commit/root, which is when the parent_hash is empty
+         */
+        bool is_root() const
+        {
+            return parent_hash.empty();
+        }
+    };
+    /**
+     * BRANCH
+     *
+     * A branch is just a named pointer to a commit.
+     *
+     *  branches["main"] = "a3f2b7c"
+     *  After commit:
+     *  branches["main"] = "b8e4d1a"  (new commit's hash)
+     *  We just change the pointers to the main, and therefore dont need a new struct
+     */
+
+    /**
+     * DIFF RESULT
+     *
+     * When comparing two commits, we produce a diff showing:
+     * Added rows (exist in new but not old)
+     * Deleted rows (exist in old but not new)
+     * Modified rows (exist in both but different)
+     *
+     */
+    struct RowDiff
+    {
+        enum class Type
+        {
+            ADDED,
+            DELETED,
+            MODIFIED
+        };
+        Type type;
+        Row old_row;
+        Row new_row;
+
+        RowDiff(Type t, Row old_r = {}, Row new_r = {}) : type(t), old_row(std::move(old_r)), new_row(std::move(new_r)) {}
+    };
+
+    struct TableDiff
+    {
+        std::string table_name;
+        std::vector<RowDiff> row_diffs;
+        bool schema_changed = false;
+    };
+
+    struct CommitDiff
+    {
+        std::string from_hash;
+        std::string to_hash;
+        std::vector<TableDiff> table_diffs;
+        std::vector<std::string> tables_added;
+        std::vector<std::string> tables_dropped;
+    };
 }
+
 int main()
 {
     using namespace repono;
