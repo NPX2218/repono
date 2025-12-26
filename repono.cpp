@@ -10,11 +10,13 @@
 #include <variant>
 #include <sstream>
 #include <iomanip>
+#include <unordered_map>
+#include <optional>
 
 namespace repono
 {
-    using Value = std::variant<
-        std::monostate, // Basically null
+    using Value = std::variant< // variant actually holds data
+        std::monostate,         // Basically null
         int64_t,
         double,
         std::string,
@@ -155,10 +157,162 @@ namespace repono
     {
         return std::holds_alternative<std::monostate>(v);
     }
-};
 
+    enum class DataType
+    {
+        INTEGER,
+        FLOAT,
+        VARCHAR, // text strings (stored as std::string)
+        BOOLEAN
+    };
+
+    std::string datatype_to_string(DataType type)
+    {
+        switch (type)
+        {
+        case DataType::INTEGER:
+            return "INTEGER";
+        case DataType::FLOAT:
+            return "FLOAT";
+        case DataType::VARCHAR:
+            return "VARCHAR";
+        case DataType::BOOLEAN:
+            return "BOOLEAN";
+        default:
+            return "UNKNOWN";
+        }
+    };
+
+    struct ColumnDef
+    {
+        std::string name;
+        DataType type = DataType::INTEGER;
+        bool is_primary_key = false;
+        bool is_nullable = true;
+
+        ColumnDef() = default; // default constructor
+
+        ColumnDef(std::string n, DataType t, bool pk = false, bool nullable = true) : name(std::move(n)), type(t), is_primary_key(pk), is_nullable(nullable) {};
+
+        std::string validate(const Value &v) const
+        {
+            if (is_null(v))
+            {
+                if (!is_nullable)
+                {
+                    return "Column '" + name + "' cannot be NULL";
+                }
+                return "";
+            }
+            bool type_ok = false;
+
+            switch (type)
+            {
+            case DataType::INTEGER:
+                type_ok = std::holds_alternative<int64_t>(v);
+                break;
+            case DataType::FLOAT:
+                // Accept both int and float (int gets converted)
+                type_ok = std::holds_alternative<double>(v) || std::holds_alternative<int64_t>(v);
+                break;
+            case DataType::VARCHAR:
+                type_ok = std::holds_alternative<std::string>(v);
+                break;
+            case DataType::BOOLEAN:
+                type_ok = std::holds_alternative<bool>(v);
+                break;
+            }
+
+            if (!type_ok)
+            {
+                return "Column '" + name + "' expects " +
+                       datatype_to_string(type) + ", got wrong type";
+            }
+            return "";
+        }
+    };
+
+    class Schema
+    {
+
+    public:
+        void add_column(const ColumnDef &column)
+        {
+            column_indices_[column.name] = columns_.size();
+            columns_.push_back(column);
+        }
+
+        const std::vector<ColumnDef> &get_columns() const { return columns_; }
+        size_t num_columns() const { return columns_.size(); }
+
+        std::optional<size_t> get_column_index(const std::string &name) const
+        {
+            auto it = column_indices_.find(name);
+            if (it != column_indices_.end()) // checking that it doesnt point to the end of the array
+            {
+                return it->second;
+            }
+            return std::nullopt;
+        };
+
+        const ColumnDef *get_column(const std::string &name) const
+        {
+            auto idx = get_column_index(name);
+            if (idx.has_value())
+            {
+                return &columns_[idx.value()];
+            }
+            return nullptr;
+        }
+
+        bool has_column(const std::string &name) const
+        {
+            return column_indices_.find(name) != column_indices_.end();
+        }
+
+        std::string validate_row(const Row &row) const
+        {
+            if (row.size() != columns_.size())
+            {
+                return "Expected " + std::to_string(columns_.size()) +
+                       " columns, got " + std::to_string(row.size());
+            }
+            for (size_t i = 0; i < row.size(); i++)
+            {
+                std::string error = columns_[i].validate(row[i]);
+                if (!error.empty())
+                {
+                    return error;
+                }
+            }
+            return "";
+        }
+
+    private:
+        std::vector<ColumnDef> columns_; // Ordered list  e.g. [ ColumnDef("id"), ColumnDef("name"), ColumnDef("age") ]
+
+        std::unordered_map<std::string, size_t> column_indices_; // Name -> index  e.g. { "id"→0, "name"→1, "age"→2 }
+    };
+
+}
 int main()
 {
-    std::cout << "ReponoDB" << std::endl;
-    return 0;
+    using namespace repono;
+
+    Schema schema;
+    schema.add_column(ColumnDef("id", DataType::INTEGER, true, false));
+    schema.add_column(ColumnDef("name", DataType::VARCHAR));
+    schema.add_column(ColumnDef("age", DataType::FLOAT));
+
+    Row good_row = {int64_t(1), std::string("Neel"), 10};
+    std::cout << "Valid row: " << schema.validate_row(good_row) << std::endl;
+
+    Row bad_row = {int64_t(1), std::string("Neel")};
+    std::cout << "Bad row: " << schema.validate_row(bad_row) << std::endl;
+
+    auto idx = schema.get_column_index("name");
+    if (idx.has_value())
+    {
+        std::cout << "name is at index: " << idx.value() << std::endl;
+    }
 }
