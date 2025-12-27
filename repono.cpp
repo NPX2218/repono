@@ -525,7 +525,253 @@ namespace repono
         return computed == commit.hash;
     }
 
+    // TOKENIZER (LEXER)
+
+    enum class TokenType
+    {
+        INTEGER_LITERAL,
+        FLOAT_LITERAL,
+        STRING_LITERAL,
+
+        IDENTIFIER, // table_name, column_name
+
+        // SQL Keywords
+        SELECT,
+        FROM,
+        WHERE,
+        INSERT,
+        INTO,
+        VALUES,
+        UPDATE,
+        SET,
+        DELETE,
+
+        // Table keywords
+        CREATE,
+        TABLE,
+        DROP,
+
+        // Logical Keywords
+        AND,
+        OR,
+        NOT,
+
+        // Value Keywords
+        NULL_KEYWORD,
+        TRUE_KEYWORD,
+        FALSE_KEYWORD,
+
+        // Constraint keywords
+
+        PRIMARY,
+        KEY,
+
+        // Type keywords
+        INTEGER_TYPE, // INTEGER, INT
+        VARCHAR_TYPE, // VARCHAR, TEXT
+        FLOAT_TYPE,   // FLOAT, DOUBLE
+        BOOLEAN_TYPE, // BOOLEAN, BOOL
+
+        // Ordering keywords
+        ORDER,
+        BY,
+        ASC,
+        DESC,
+        LIMIT,
+        OFFSET,
+
+        // Comparison
+        EQUALS,        // =
+        NOT_EQUALS,    // != or <>
+        LESS_THAN,     // <
+        GREATER_THAN,  // >
+        LESS_EQUAL,    // <=
+        GREATER_EQUAL, // >=
+
+        // Arithmetic
+        PLUS,     // +
+        MINUS,    // -
+        ASTERISK, // *
+        SLASH,    // /
+
+        // Punctuation
+        COMMA,       // ,
+        SEMICOLON,   // ;
+        LEFT_PAREN,  // (
+        RIGHT_PAREN, // )
+        DOT,         // .
+
+        // Special
+        END_OF_FILE, // End of input
+        INVALID      // Unknown/error token
+    };
+
+    /**
+     * Convert TokenType to a readable string (for debugging)
+     */
+    std::string token_type_to_string(TokenType type)
+    {
+        switch (type)
+        {
+        case TokenType::INTEGER_LITERAL:
+            return "INTEGER_LITERAL";
+        case TokenType::FLOAT_LITERAL:
+            return "FLOAT_LITERAL";
+        case TokenType::STRING_LITERAL:
+            return "STRING_LITERAL";
+        case TokenType::IDENTIFIER:
+            return "IDENTIFIER";
+        case TokenType::SELECT:
+            return "SELECT";
+        case TokenType::FROM:
+            return "FROM";
+        case TokenType::WHERE:
+            return "WHERE";
+        case TokenType::INSERT:
+            return "INSERT";
+        case TokenType::INTO:
+            return "INTO";
+        case TokenType::VALUES:
+            return "VALUES";
+        case TokenType::UPDATE:
+            return "UPDATE";
+        case TokenType::SET:
+            return "SET";
+        case TokenType::DELETE:
+            return "DELETE";
+        case TokenType::CREATE:
+            return "CREATE";
+        case TokenType::TABLE:
+            return "TABLE";
+        case TokenType::DROP:
+            return "DROP";
+        case TokenType::AND:
+            return "AND";
+        case TokenType::OR:
+            return "OR";
+        case TokenType::NOT:
+            return "NOT";
+        case TokenType::NULL_KEYWORD:
+            return "NULL";
+        case TokenType::TRUE_KEYWORD:
+            return "TRUE";
+        case TokenType::FALSE_KEYWORD:
+            return "FALSE";
+        case TokenType::PRIMARY:
+            return "PRIMARY";
+        case TokenType::KEY:
+            return "KEY";
+        case TokenType::INTEGER_TYPE:
+            return "INTEGER_TYPE";
+        case TokenType::VARCHAR_TYPE:
+            return "VARCHAR_TYPE";
+        case TokenType::FLOAT_TYPE:
+            return "FLOAT_TYPE";
+        case TokenType::BOOLEAN_TYPE:
+            return "BOOLEAN_TYPE";
+        case TokenType::ORDER:
+            return "ORDER";
+        case TokenType::BY:
+            return "BY";
+        case TokenType::ASC:
+            return "ASC";
+        case TokenType::DESC:
+            return "DESC";
+        case TokenType::LIMIT:
+            return "LIMIT";
+        case TokenType::OFFSET:
+            return "OFFSET";
+        case TokenType::EQUALS:
+            return "EQUALS";
+        case TokenType::NOT_EQUALS:
+            return "NOT_EQUALS";
+        case TokenType::LESS_THAN:
+            return "LESS_THAN";
+        case TokenType::GREATER_THAN:
+            return "GREATER_THAN";
+        case TokenType::LESS_EQUAL:
+            return "LESS_EQUAL";
+        case TokenType::GREATER_EQUAL:
+            return "GREATER_EQUAL";
+        case TokenType::PLUS:
+            return "PLUS";
+        case TokenType::MINUS:
+            return "MINUS";
+        case TokenType::ASTERISK:
+            return "ASTERISK";
+        case TokenType::SLASH:
+            return "SLASH";
+        case TokenType::COMMA:
+            return "COMMA";
+        case TokenType::SEMICOLON:
+            return "SEMICOLON";
+        case TokenType::LEFT_PAREN:
+            return "LEFT_PAREN";
+        case TokenType::RIGHT_PAREN:
+            return "RIGHT_PAREN";
+        case TokenType::DOT:
+            return "DOT";
+        case TokenType::END_OF_FILE:
+            return "EOF";
+        case TokenType::INVALID:
+            return "INVALID";
+        default:
+            return "UNKNOWN";
+        }
+    }
+
+    /**
+     * Token
+     *
+     *  Represents a single token from the input.
+     */
+    struct Token
+    {
+        TokenType type;   // What kind of token
+        std::string text; // The orginal text
+
+        // the actual value for the literals
+        std::variant<std::monostate, int64_t, double, std::string> value;
+
+        int line;   // position in source
+        int column; // position in source
+
+        // Constructor
+        Token(TokenType t = TokenType::INVALID,
+              std::string txt = "",
+              int ln = 1,
+              int col = 1)
+            : type(t), text(std::move(txt)), value(std::monostate{}), line(ln), column(col)
+        {
+        }
+
+        bool is(TokenType t) const
+        {
+            return type == t;
+        }
+
+        bool is_keyword() const
+        {
+            return type >= TokenType::SELECT && type <= TokenType::OFFSET;
+        }
+
+        bool is_comparison() const
+        {
+            return type >= TokenType::EQUALS && type <= TokenType::GREATER_EQUAL;
+        }
+
+        std::string to_string() const
+        {
+            std::string result = token_type_to_string(type);
+            if (!text.empty() && type != TokenType::END_OF_FILE)
+            {
+                result += "('" + text + "')";
+            }
+            return result;
+        }
+    };
 };
+
 int main()
 {
     using namespace repono;
