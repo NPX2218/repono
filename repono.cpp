@@ -12,6 +12,7 @@
 #include <iomanip>
 #include <unordered_map>
 #include <optional>
+#include <openssl/sha.h>
 
 namespace repono
 {
@@ -163,7 +164,8 @@ namespace repono
         INTEGER,
         FLOAT,
         VARCHAR, // text strings (stored as std::string)
-        BOOLEAN
+        BOOLEAN,
+        TIMESTAMP
     };
 
     /**
@@ -184,6 +186,8 @@ namespace repono
             return "VARCHAR";
         case DataType::BOOLEAN:
             return "BOOLEAN";
+        case DataType::TIMESTAMP:
+            return "TIMESTAMP";
         default:
             return "UNKNOWN";
         }
@@ -241,6 +245,9 @@ namespace repono
             case DataType::BOOLEAN:
                 type_ok = std::holds_alternative<bool>(v);
                 break;
+            case DataType::TIMESTAMP:
+                type_ok = std::holds_alternative<int64_t>(v); // Store as int64_t
+                break;
             }
 
             if (!type_ok)
@@ -261,6 +268,25 @@ namespace repono
          *
          * @param column The column to add
          */
+
+        Schema() = default;
+
+        // Copy constructor
+        Schema(const Schema &other)
+            : columns_(other.columns_),
+              column_indices_(other.column_indices_) {}
+
+        // Copy assignment operator
+
+        Schema &operator=(const Schema &other)
+        {
+            if (this != &other)
+            { // Self-assignment check
+                columns_ = other.columns_;
+                column_indices_ = other.column_indices_;
+            }
+            return *this;
+        }
         void add_column(const ColumnDef &column)
         {
             column_indices_[column.name] = columns_.size();
@@ -370,7 +396,7 @@ namespace repono
         int64_t timestamp;
 
         std::unordered_map<std::string, std::vector<Row>> table_data;
-
+        std::unordered_map<std::string, Schema> table_schemas;
         /**
          * Checks if this is the initial commit/root, which is when the parent_hash is empty
          */
@@ -397,6 +423,10 @@ namespace repono
      * Added rows (exist in new but not old)
      * Deleted rows (exist in old but not new)
      * Modified rows (exist in both but different)
+     *
+     * CommitDiff = "what changed between version A and version B"
+     * TableDiff = "what changed in this specific table"
+     * RowDiff = "what changed in this specific row
      *
      */
     struct RowDiff
@@ -429,26 +459,147 @@ namespace repono
         std::vector<std::string> tables_added;
         std::vector<std::string> tables_dropped;
     };
-}
 
+    std::string compute_hash(const std::string &data)
+    {
+        unsigned char hash[SHA256_DIGEST_LENGTH];
+        SHA256(reinterpret_cast<const unsigned char *>(data.c_str()),
+               data.size(),
+               hash);
+
+        std::ostringstream oss;
+        for (int i = 0; i < SHA256_DIGEST_LENGTH; i++)
+        {
+            oss << std::hex << std::setfill('0') << std::setw(2)
+                << static_cast<int>(hash[i]);
+        }
+        return oss.str(); // Full 64-char hash
+    }
+
+    /**
+     * Verify a commit's hash matches its content
+     *
+     * @param commit The commit to validate
+     * @return true if hash is correct
+     */
+
+    std::string compute_commit_hash(const Commit &commit)
+    {
+        std::ostringstream oss;
+
+        // Include parent hash (or empty string for root)
+        oss << "parent:" << commit.parent_hash << "\n";
+        oss << "message:" << commit.message << "\n";
+        oss << "timestamp:" << commit.timestamp << "\n";
+
+        // Include table data (sorted for deterministic order)
+        std::vector<std::string> table_names;
+        for (const auto &[name, _] : commit.table_data)
+        {
+            table_names.push_back(name);
+        }
+        std::sort(table_names.begin(), table_names.end());
+
+        for (const auto &name : table_names)
+        {
+            oss << "table:" << name << "\n";
+            for (const auto &row : commit.table_data.at(name))
+            {
+                oss << "row:";
+                for (size_t i = 0; i < row.size(); i++)
+                {
+                    if (i > 0)
+                        oss << ",";
+                    oss << value_to_string(row[i]);
+                }
+                oss << "\n";
+            }
+        }
+
+        return compute_hash(oss.str());
+    }
+
+    bool validate_commit(const Commit &commit)
+    {
+        std::string computed = compute_commit_hash(commit);
+        return computed == commit.hash;
+    }
+
+};
 int main()
 {
     using namespace repono;
 
-    Schema schema;
-    schema.add_column(ColumnDef("id", DataType::INTEGER, true, false));
-    schema.add_column(ColumnDef("name", DataType::VARCHAR));
-    schema.add_column(ColumnDef("age", DataType::FLOAT));
+    std::cout << "Testing ReponoDB\n\n";
 
-    Row good_row = {int64_t(1), std::string("Neel"), 10};
-    std::cout << "Valid row: " << schema.validate_row(good_row) << std::endl;
+    // Create some values
+    Value null_val = std::monostate{};
+    Value age = int64_t{19};
+    Value gpa = 3.8;
+    Value name = std::string{"Neel"};
+    Value active = true;
 
-    Row bad_row = {int64_t(1), std::string("Neel")};
-    std::cout << "Bad row: " << schema.validate_row(bad_row) << std::endl;
+    std::cout << "Values:\n";
+    std::cout << "  " << value_to_string(null_val) << "\n";
+    std::cout << "  " << value_to_string(age) << "\n";
+    std::cout << "  " << value_to_string(gpa) << "\n";
+    std::cout << "  " << value_to_string(name) << "\n";
+    std::cout << "  " << value_to_string(active) << "\n\n";
 
-    auto idx = schema.get_column_index("name");
-    if (idx.has_value())
+    // Build a users table schema
+    Schema users_schema;
+    users_schema.add_column(ColumnDef("id", DataType::INTEGER, true, false));
+    users_schema.add_column(ColumnDef("name", DataType::VARCHAR));
+    users_schema.add_column(ColumnDef("age", DataType::INTEGER));
+
+    std::cout << "Schema created with " << users_schema.num_columns() << " columns\n";
+
+    // Check column lookup
+    if (auto idx = users_schema.get_column_index("name"))
     {
-        std::cout << "name is at index: " << idx.value() << std::endl;
+        std::cout << "Found 'name' at index " << *idx << "\n";
     }
+
+    if (!users_schema.get_column_index("email"))
+    {
+        std::cout << "No 'email' column (expected)\n";
+    }
+
+    // Create some rows
+    Row neel = {int64_t{1}, std::string{"Neel"}, int64_t{19}};
+    Row swati = {int64_t{2}, std::string{"Swati"}, int64_t{21}};
+
+    // Validate them
+    std::string err = users_schema.validate_row(neel);
+    std::cout << "\nNeel valid: " << (err.empty() ? "yes" : err) << "\n";
+
+    Row bad_row = {int64_t{1}, std::string{"Neel"}}; // missing age
+    err = users_schema.validate_row(bad_row);
+    std::cout << "Bad row: " << err << "\n";
+
+    // Create first commit
+    Commit first;
+    first.parent_hash = "";
+    first.message = "Initial commit";
+    first.timestamp = 1703529600;
+    first.table_schemas["users"] = users_schema;
+    first.table_data["users"] = {neel};
+    first.hash = compute_commit_hash(first);
+
+    std::cout << "\nFirst commit: " << first.hash.substr(0, 8) << "...\n";
+
+    // Create second commit
+    Commit second;
+    second.parent_hash = first.hash;
+    second.message = "Added Swati";
+    second.timestamp = 1703529700;
+    second.table_schemas["users"] = users_schema;
+    second.table_data["users"] = {neel, swati};
+    second.hash = compute_commit_hash(second);
+
+    std::cout << "Second commit: " << second.hash.substr(0, 8) << "...\n";
+    std::cout << "  parent: " << second.parent_hash.substr(0, 8) << "...\n";
+
+    std::cout << "\nDone!\n";
+    return 0;
 }
