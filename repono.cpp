@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <optional>
 #include <openssl/sha.h>
+#include <algorithm>
 
 namespace repono
 {
@@ -543,6 +544,7 @@ namespace repono
         INTO,
         VALUES,
         UPDATE,
+        BETWEEN,
         SET,
         DELETE,
 
@@ -629,6 +631,8 @@ namespace repono
             return "WHERE";
         case TokenType::INSERT:
             return "INSERT";
+        case TokenType::BETWEEN:
+            return "BETWEEN";
         case TokenType::INTO:
             return "INTO";
         case TokenType::VALUES:
@@ -770,82 +774,466 @@ namespace repono
             return result;
         }
     };
+
+    class Lexer
+    {
+    public:
+        explicit Lexer(std::string source)
+            : source_(std::move(source)), current_(0), line_(1), column_(1)
+        {
+            init_keywords();
+        }
+
+        std::vector<Token> tokenize()
+        {
+            std::vector<Token> tokens;
+            while (!is_at_end())
+            {
+                skip_whitespace_and_comments();
+
+                if (is_at_end())
+                    break;
+
+                Token token = scan_token();
+                tokens.push_back(token);
+            }
+            tokens.push_back(Token(TokenType::END_OF_FILE, "", line_, column_));
+
+            return tokens;
+        }
+
+    private:
+        std::string source_;                                  // input SQL
+        size_t current_;                                      // current pos
+        int line_;                                            // current line
+        int column_;                                          // current col
+        std::unordered_map<std::string, TokenType> keywords_; // keyword lookup
+
+        void init_keywords()
+        {
+            keywords_ = {
+                // Query keywords
+                {"SELECT", TokenType::SELECT},
+                {"FROM", TokenType::FROM},
+                {"WHERE", TokenType::WHERE},
+                {"INSERT", TokenType::INSERT},
+                {"INTO", TokenType::INTO},
+                {"VALUES", TokenType::VALUES},
+                {"UPDATE", TokenType::UPDATE},
+                {"SET", TokenType::SET},
+                {"DELETE", TokenType::DELETE},
+                {"BETWEEN", TokenType::BETWEEN},
+                // Table keywords
+                {"CREATE", TokenType::CREATE},
+                {"TABLE", TokenType::TABLE},
+                {"DROP", TokenType::DROP},
+
+                // Logical keywords
+                {"AND", TokenType::AND},
+                {"OR", TokenType::OR},
+                {"NOT", TokenType::NOT},
+
+                // Value keywords
+                {"NULL", TokenType::NULL_KEYWORD},
+                {"TRUE", TokenType::TRUE_KEYWORD},
+                {"FALSE", TokenType::FALSE_KEYWORD},
+
+                // Constraint keywords
+                {"PRIMARY", TokenType::PRIMARY},
+                {"KEY", TokenType::KEY},
+
+                // Type keywords (multiple spellings)
+                {"INTEGER", TokenType::INTEGER_TYPE},
+                {"INT", TokenType::INTEGER_TYPE},
+                {"VARCHAR", TokenType::VARCHAR_TYPE},
+                {"TEXT", TokenType::VARCHAR_TYPE},
+                {"FLOAT", TokenType::FLOAT_TYPE},
+                {"DOUBLE", TokenType::FLOAT_TYPE},
+                {"BOOLEAN", TokenType::BOOLEAN_TYPE},
+                {"BOOL", TokenType::BOOLEAN_TYPE},
+
+                // Ordering keywords
+                {"ORDER", TokenType::ORDER},
+                {"BY", TokenType::BY},
+                {"ASC", TokenType::ASC},
+                {"DESC", TokenType::DESC},
+                {"LIMIT", TokenType::LIMIT},
+                {"OFFSET", TokenType::OFFSET}};
+        }
+        bool is_at_end() const
+        {
+            return current_ >= source_.length();
+        }
+        char peek() const
+        {
+            if (is_at_end())
+                return '\0';
+            return source_[current_];
+        }
+
+        char peek_next() const
+        {
+            if (current_ + 1 >= source_.length())
+                return '\0';
+            return source_[current_ + 1];
+        }
+
+        char advance()
+        {
+            char c = source_[current_++];
+            if (c == '\n')
+            {
+                column_ = 1;
+                line_++;
+            }
+            else
+            {
+                column_++;
+            }
+            return c;
+        }
+
+        bool match(char expected)
+        {
+            if (is_at_end())
+                return false;
+            if (expected != source_[current_])
+                return false;
+            advance();
+            return true;
+        }
+
+        void skip_whitespace_and_comments()
+        {
+            while (!is_at_end())
+            {
+                char c = peek();
+
+                // Whitespace
+                if (c == ' ' || c == '\t' || c == '\r' || c == '\n')
+                {
+                    advance();
+                    continue;
+                };
+
+                // Single line comment: -- ..
+                if (c == '-' && peek_next() == '-')
+                {
+                    while (!is_at_end() && peek() != '\n')
+                    {
+                        advance();
+                    }
+                    continue;
+                }
+
+                // Block comment: /* */
+                if (c == '/' && peek_next() == '*')
+                {
+                    advance(); // Skip /
+                    advance(); // Skip *
+
+                    while (!is_at_end())
+                    {
+                        if (peek() == '*' && peek_next() == '/')
+                        {
+                            advance(); // Skip *
+                            advance(); // Skip /
+                            break;
+                        }
+                        advance();
+                    }
+                    continue;
+                }
+                break;
+            }
+        }
+
+        Token scan_token()
+        {
+            int start_line = line_;
+            int start_column = column_;
+            size_t start_pos = current_;
+
+            char c = advance();
+
+            switch (c)
+            {
+            case '(':
+                return Token(TokenType::LEFT_PAREN, "(", start_line, start_column);
+            case ')':
+                return Token(TokenType::RIGHT_PAREN, ")", start_line, start_column);
+            case ',':
+                return Token(TokenType::COMMA, ",", start_line, start_column);
+            case ';':
+                return Token(TokenType::SEMICOLON, ";", start_line, start_column);
+            case '.':
+                return Token(TokenType::DOT, ".", start_line, start_column);
+            case '+':
+                return Token(TokenType::PLUS, "+", start_line, start_column);
+            case '-':
+                return Token(TokenType::MINUS, "-", start_line, start_column);
+            case '*':
+                return Token(TokenType::ASTERISK, "*", start_line, start_column);
+            case '/':
+                return Token(TokenType::SLASH, "/", start_line, start_column);
+            case '=':
+                return Token(TokenType::EQUALS, "=", start_line, start_column);
+
+            // Checking two character operators
+            case '!':
+                if (match('='))
+                {
+                    return Token(TokenType::NOT_EQUALS, "!=", start_line, start_column);
+                }
+                // Just ! alone is invalid
+                return make_error_token("Unexpected character", c, start_line, start_column);
+
+            case '<':
+                if (match('='))
+                {
+                    return Token(TokenType::LESS_EQUAL, "<=", start_line, start_column);
+                }
+                if (match('>'))
+                {
+                    return Token(TokenType::NOT_EQUALS, "<>", start_line, start_column);
+                }
+                return Token(TokenType::LESS_THAN, "<", start_line, start_column);
+
+            case '>':
+                if (match('='))
+                {
+                    return Token(TokenType::GREATER_EQUAL, ">=", start_line, start_column);
+                }
+                return Token(TokenType::GREATER_THAN, ">", start_line, start_column);
+            case '`':
+                return scan_backtick_identifier(start_line, start_column);
+
+            case '\'':
+            case '"':
+                return scan_string(c, start_line, start_column);
+            }
+            if (std::isdigit(c))
+            {
+                return scan_number(start_pos, start_line, start_column);
+            }
+
+            // Indentifiers and keyword
+            if (std::isalpha(c) || c == '_')
+            {
+                return scan_identifier(start_pos, start_line, start_column);
+            }
+
+            // Unknown character
+            return make_error_token("Unexpected character", c, start_line, start_column);
+        };
+
+        Token make_error_token(const std::string &message, char bad_char, int line, int col)
+        {
+            std::string error_msg = message + " '" + std::string(1, bad_char) + "'" + " (ASCII " + std::to_string(static_cast<int>(bad_char)) + ")";
+            return Token(TokenType::INVALID, error_msg, line, col);
+        }
+
+        Token scan_string(char quote, int start_line, int start_column)
+        {
+            std::string value;
+            while (!is_at_end() && peek() != quote)
+            {
+                if (peek() == '\\')
+                {
+                    advance();
+                    if (!is_at_end())
+                    {
+                        char escaped = advance();
+                        switch (escaped)
+                        {
+                        case 'n':
+                            value += '\n';
+                            break;
+                        case 't':
+                            value += '\t';
+                            break;
+                        case 'r':
+                            value += '\r';
+                            break;
+                        case '\\':
+                            value += '\\';
+                            break;
+                        case '\'':
+                            value += '\'';
+                            break;
+                        case '"':
+                            value += '"';
+                            break;
+                        default:
+                            value += escaped;
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    value += advance();
+                }
+            }
+
+            if (is_at_end())
+            {
+                return Token(TokenType::INVALID, "Unterminated string", start_line, start_column);
+            };
+            advance();
+
+            Token token(TokenType::STRING_LITERAL, value, start_line, start_column);
+            token.value = value;
+            return token;
+        };
+
+        Token scan_number(size_t start_pos, int start_line, int start_column)
+        {
+            current_ = start_pos;
+            column_ = start_column;
+
+            if (peek() == '0' && (peek_next() == 'x' || peek_next() == 'X'))
+            {
+                advance();
+                advance();
+
+                size_t hex_start = current_;
+
+                while (!is_at_end() && std::isxdigit(peek()))
+                {
+                    advance();
+                }
+
+                if (current_ == hex_start)
+                {
+                    return Token(TokenType::INVALID, "Invalid hex number", start_line, start_column);
+                }
+
+                std::string hex_text = source_.substr(hex_start, current_ - hex_start);
+
+                int64_t value = std::stoll(hex_text, nullptr, 16); // base 16
+
+                Token token(TokenType::INTEGER_LITERAL, source_.substr(start_pos, current_ - start_pos), start_line, start_column);
+                token.value = value;
+                return token;
+            };
+
+            bool is_float = false;
+
+            while (!is_at_end() && std::isdigit(peek()))
+            {
+                advance();
+            }
+            if (!is_at_end() && peek() == '.' && std::isdigit(peek_next()))
+            {
+                is_float = true;
+                advance();
+                while (!is_at_end() && std::isdigit(peek()))
+                {
+                    advance();
+                };
+            };
+            std::string text = source_.substr(start_pos, current_ - start_pos);
+            if (is_float)
+            {
+                Token token(TokenType::FLOAT_LITERAL, text, start_line, start_column);
+                token.value = std::stod(text); // string to double
+                return token;
+            }
+            else
+            {
+                Token token(TokenType::INTEGER_LITERAL, text, start_line, start_column);
+                token.value = std::stoll(text); // string to long long
+                return token;
+            }
+        }
+
+        Token scan_backtick_identifier(int start_line, int start_column)
+        {
+            std::string value;
+
+            while (!is_at_end() && peek() != '`')
+            {
+                if (peek() == '\n')
+                {
+                    return Token(TokenType::INVALID, "Newline in backtick identifier", start_line, start_column);
+                };
+                value += advance();
+            }
+
+            if (is_at_end())
+            {
+                return Token(TokenType::INVALID, "Unterminated backtick identifier", start_line, start_column);
+            }
+            advance();
+            if (value.empty())
+            {
+                return Token(TokenType::INVALID, "Empty backtick identifier", start_line, start_column);
+            }
+            return Token(TokenType::IDENTIFIER, value, start_line, start_column);
+        }
+
+        Token scan_identifier(size_t start_pos, int start_line, int start_column)
+        {
+            current_ = start_pos;
+            column_ = start_column;
+
+            // checks if its alphanumeric or underscore
+            while (!is_at_end() && (std::isalnum(peek()) || peek() == '_'))
+            {
+                advance();
+            };
+
+            std::string text = source_.substr(start_pos, current_ - start_pos);
+
+            // converts text to uppercase
+            std::string upper = text;
+            for (char &c : upper)
+            {
+                c = std::toupper(static_cast<unsigned char>(c));
+            };
+
+            auto it = keywords_.find(upper);
+            if (it != keywords_.end())
+            {
+                return Token(it->second, text, start_line, start_column);
+            }
+            return Token(TokenType::IDENTIFIER, text, start_line, start_column);
+        }
+    };
 };
 
 int main()
 {
     using namespace repono;
 
-    std::cout << "Testing ReponoDB\n\n";
+    std::vector<std::string> test_queries = {
+        "SELECT * FROM users",
+        "SELECT name, age FROM users WHERE age > 25",
+        "INSERT INTO users VALUES (1, 'Neel', 15)",
+        "INSERT INTO users VALUES (1, 'Soham', 25)",
 
-    // Create some values
-    Value null_val = std::monostate{};
-    Value age = int64_t{19};
-    Value gpa = 3.8;
-    Value name = std::string{"Neel"};
-    Value active = true;
+        "CREATE TABLE test (id INTEGER PRIMARY KEY, name VARCHAR)",
+        "SELECT * FROM users ORDER BY age DESC LIMIT 10", "SELECT * FROM users WHERE flags = 0xFF", "SELECT * FROM users WHERE age BETWEEN 18 AND 65", "SELECT @ FROM users", "SELECT `first-name`, `user.email` FROM `my-table`"};
 
-    std::cout << "Values:\n";
-    std::cout << "  " << value_to_string(null_val) << "\n";
-    std::cout << "  " << value_to_string(age) << "\n";
-    std::cout << "  " << value_to_string(gpa) << "\n";
-    std::cout << "  " << value_to_string(name) << "\n";
-    std::cout << "  " << value_to_string(active) << "\n\n";
-
-    // Build a users table schema
-    Schema users_schema;
-    users_schema.add_column(ColumnDef("id", DataType::INTEGER, true, false));
-    users_schema.add_column(ColumnDef("name", DataType::VARCHAR));
-    users_schema.add_column(ColumnDef("age", DataType::INTEGER));
-
-    std::cout << "Schema created with " << users_schema.num_columns() << " columns\n";
-
-    // Check column lookup
-    if (auto idx = users_schema.get_column_index("name"))
+    for (const auto &sql : test_queries)
     {
-        std::cout << "Found 'name' at index " << *idx << "\n";
+        std::cout << "SQL: " << sql << std::endl;
+        std::cout << "Tokens: ";
+
+        Lexer lexer(sql);
+        auto tokens = lexer.tokenize();
+
+        for (const auto &token : tokens)
+        {
+            if (token.type != TokenType::END_OF_FILE)
+            {
+                std::cout << token.to_string() << " ";
+            }
+        }
+        std::cout << std::endl
+                  << std::endl;
     }
 
-    if (!users_schema.get_column_index("email"))
-    {
-        std::cout << "No 'email' column (expected)\n";
-    }
-
-    // Create some rows
-    Row neel = {int64_t{1}, std::string{"Neel"}, int64_t{19}};
-    Row swati = {int64_t{2}, std::string{"Swati"}, int64_t{21}};
-
-    // Validate them
-    std::string err = users_schema.validate_row(neel);
-    std::cout << "\nNeel valid: " << (err.empty() ? "yes" : err) << "\n";
-
-    Row bad_row = {int64_t{1}, std::string{"Neel"}}; // missing age
-    err = users_schema.validate_row(bad_row);
-    std::cout << "Bad row: " << err << "\n";
-
-    // Create first commit
-    Commit first;
-    first.parent_hash = "";
-    first.message = "Initial commit";
-    first.timestamp = 1703529600;
-    first.table_schemas["users"] = users_schema;
-    first.table_data["users"] = {neel};
-    first.hash = compute_commit_hash(first);
-
-    std::cout << "\nFirst commit: " << first.hash.substr(0, 8) << "...\n";
-
-    // Create second commit
-    Commit second;
-    second.parent_hash = first.hash;
-    second.message = "Added Swati";
-    second.timestamp = 1703529700;
-    second.table_schemas["users"] = users_schema;
-    second.table_data["users"] = {neel, swati};
-    second.hash = compute_commit_hash(second);
-
-    std::cout << "Second commit: " << second.hash.substr(0, 8) << "...\n";
-    std::cout << "  parent: " << second.parent_hash.substr(0, 8) << "...\n";
-
-    std::cout << "\nDone!\n";
     return 0;
 }
